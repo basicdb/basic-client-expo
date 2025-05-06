@@ -64,7 +64,7 @@ export const BasicProvider = <S extends DBSchema>({ children, schema, project_id
   const config = {
     clientId: project_id,
     redirectUri: AuthSession.makeRedirectUri({
-      scheme: 'your-app-scheme',
+      scheme: 'your-app-scheme', // TODO: replace with schema from expo config 
       path: 'oauth/callback'
     }),
     scopes: ['openid', 'profile', 'email'],

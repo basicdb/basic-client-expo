@@ -16,9 +16,8 @@ First, you need to define your database schema.
 
 ```typescript
 // src/schema.ts
-import { defineSchema } from '@basictech/expo/db'; // Adjust import path if needed
 
-export const schema = defineSchema({
+export const schema = {
   project_id: 'YOUR_PROJECT_ID', // Replace with your actual project ID
   version: 1,
   tables: {
@@ -32,7 +31,7 @@ export const schema = defineSchema({
     },
     // Add other tables here
   },
-});
+};
 
 // Infer the type for use with the hook
 export type AppSchema = typeof schema;
@@ -45,7 +44,7 @@ Next, wrap your application's root component (e.g., `App.tsx`) with the `BasicPr
 // App.tsx (or your root component)
 import React from 'react';
 import { BasicProvider } from '@basictech/expo'; // Adjust import path if needed
-import { schema, AppSchema } from './schema'; // Import your schema
+import { schema } from './schema'; // Import your schema
 import MainApp from './MainApp'; // Your main application component
 
 export default function App() {
@@ -95,8 +94,7 @@ function ExampleComponent() {
       const fetchNotes = async () => {
         try {
           // Access the 'notes' table
-          const notesTable = db.from('notes');
-          const fetchedNotes = await notesTable.select();
+          const notesTable = db.from('notes').select();
           setNotes(fetchedNotes);
         } catch (error) {
           console.error("Failed to fetch notes:", error);
@@ -111,8 +109,7 @@ function ExampleComponent() {
   const handleAddNote = async () => {
     if (!db || !newNoteTitle) return;
     try {
-      const notesTable = db.from('notes');
-      const newNote = await notesTable.insert({
+      const notesTable = db.from('notes').insert({
         title: newNoteTitle,
         content: 'Default content', // Add other fields as needed
         createdAt: Date.now(),
