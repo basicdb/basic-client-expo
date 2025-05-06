@@ -4,6 +4,7 @@ import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
 import { BasicDBSDK, DBSchema } from './db';
 
+
 interface TokenResponse {
   access_token: string;
   token_type: string;
@@ -50,19 +51,26 @@ interface BasicContextType<S extends DBSchema> extends Omit<AuthState, 'user'> {
 
 const TOKEN_STORAGE_KEY = 'auth_tokens';
 const USER_INFO_STORAGE_KEY = 'user_info';
-const SDK_VERSION = '0.0.3';
+const SDK_VERSION = '0.0.4';
 
 const AuthWebHandler = (config: any) => { 
   const generateRandomState = () => {
     const randomBytes = new Uint8Array(5);
-    window.crypto.getRandomValues(randomBytes);
+    // @ts-ignore
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      // @ts-ignore
+      window?.crypto?.getRandomValues(randomBytes);
+    }
     return Array.from(randomBytes)
       .map(b => b.toString(16).padStart(2, '0'))
       .join('');
   };
   
   const state = generateRandomState();
-  sessionStorage.setItem('basic_oauth_state', state);
+  // @ts-ignore
+  if (Platform.OS === 'web' && typeof window !== 'undefined' && typeof sessionStorage !== 'undefined') {
+    sessionStorage.setItem('basic_oauth_state', state);
+  }
   
   return {
     createAuthUrl: () => {
@@ -343,8 +351,10 @@ export const BasicProvider = <S extends DBSchema>({ children, schema, project_id
   }
 
   const login = async () => {
-    if (Platform.OS === 'web') {
+    // @ts-ignore
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
       const url = AuthWebHandler(config).createAuthUrl();
+      // @ts-ignore
       window.location.href = url;
 
     } else {
@@ -431,15 +441,19 @@ export const BasicProvider = <S extends DBSchema>({ children, schema, project_id
   useEffect(() => {
     loadStoredAuth();
 
-    if (Platform.OS === 'web') {
+    // @ts-ignore
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      // @ts-ignore
       if (window.location.pathname.includes('oauth/callback')) {
+        // @ts-ignore
         const urlParams = new URLSearchParams(window.location.search);
         const code = urlParams.get('code');
         const state = urlParams.get('state');
-        const storedState = sessionStorage.getItem('basic_oauth_state');
+        const storedState = typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('basic_oauth_state') : null;
 
         if (code && state === storedState) {
           handleLoginCode(code);
+          // @ts-ignore
           window.history.replaceState({}, '', window.location.pathname);
         }
       }
@@ -501,7 +515,6 @@ export const BasicProvider = <S extends DBSchema>({ children, schema, project_id
   useEffect(() => {
     checkForUpdates();
 
-    // Show warning on web platform about security
     if (Platform.OS === 'web') {
       console.warn('@basictech/expo - running on web platform - some features may not work as expected');
     }
