@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import * as AuthSession from 'expo-auth-session';
 import * as SecureStore from 'expo-secure-store';
+import { Platform } from 'react-native';
 import { BasicDBSDK, DBSchema } from './db';
 
 interface TokenResponse {
@@ -51,21 +52,84 @@ const TOKEN_STORAGE_KEY = 'auth_tokens';
 const USER_INFO_STORAGE_KEY = 'user_info';
 const SDK_VERSION = '0.0.3';
 
+const AuthWebHandler = (config: any) => { 
+  const generateRandomState = () => {
+    const randomBytes = new Uint8Array(5);
+    window.crypto.getRandomValues(randomBytes);
+    return Array.from(randomBytes)
+      .map(b => b.toString(16).padStart(2, '0'))
+      .join('');
+  };
+  
+  const state = generateRandomState();
+  sessionStorage.setItem('basic_oauth_state', state);
+  
+  return {
+    createAuthUrl: () => {
+      const redirectUri = AuthSession.makeRedirectUri({
+        scheme: config.scheme,
+        path: 'oauth/callback'
+    });
+      const scopeParam = config.scopes ? `&scope=${config.scopes.join(',')}` : '';
+      return `${config.authorizationEndpoint}?response_type=code&client_id=${config.clientId}&redirect_uri=${redirectUri}${scopeParam}&state=${state}`;
+    }
+  }
+}
+
+
+const storageAdapter = {
+  setItem: async (key: string, value: string): Promise<void> => {
+    if (Platform.OS === 'web') {
+      try {
+        const encryptedValue = btoa(value); // Base64 encoding for simple obfuscation
+        localStorage.setItem(key, encryptedValue);
+      } catch (error) {
+        console.error('Error storing data in localStorage:', error);
+      }
+    } else {
+      await SecureStore.setItemAsync(key, value);
+    }
+  },
+
+  getItem: async (key: string): Promise<string | null> => {
+    if (Platform.OS === 'web') {
+      try {
+        const encryptedValue = localStorage.getItem(key);
+        if (!encryptedValue) return null;
+        return atob(encryptedValue); // Base64 decoding
+      } catch (error) {
+        console.error('Error retrieving data from localStorage:', error);
+        return null;
+      }
+    } else {
+      return await SecureStore.getItemAsync(key);
+    }
+  },
+
+  deleteItem: async (key: string): Promise<void> => {
+    if (Platform.OS === 'web') {
+      try {
+        localStorage.removeItem(key);
+      } catch (error) {
+        console.error('Error removing data from localStorage:', error);
+      }
+    } else {
+      await SecureStore.deleteItemAsync(key);
+    }
+  }
+};
+
 const checkForUpdates = async () => {
   try {
-    
     const response = await fetch('https://registry.npmjs.org/@basictech/expo');
     if (!response.ok) {
-      throw new Error('Failed to fetch package info');
+      console.warn(`Initializing @basictech/expo - v${SDK_VERSION} - Error checking for updates: ${response.statusText}`);
     }
-    
     const packageInfo = await response.json();
     const latestVersion = packageInfo['dist-tags']?.latest;
-    
-    console.log('latestVersion', latestVersion)
     if (latestVersion && latestVersion !== SDK_VERSION) {
       console.warn(`Initializing @basictech/expo - v${SDK_VERSION} - ⚠️  new version available ${latestVersion}, pls update`);
-    } else { 
+    } else {
       console.log(`Initializing @basictech/expo - v${SDK_VERSION} - (latest ✅) `);
     }
   } catch (error) {
@@ -113,10 +177,10 @@ export const BasicProvider = <S extends DBSchema>({ children, schema, project_id
   const isTokenExpired = (token: string): boolean => {
     const decoded = decodeJWT(token);
     if (!decoded || !decoded.exp) return true;
-    
+
     const expirationTime = decoded.exp * 1000;
     const currentTime = Date.now();
-    
+
     return currentTime >= (expirationTime - 5 * 60 * 1000);
   };
 
@@ -127,18 +191,18 @@ export const BasicProvider = <S extends DBSchema>({ children, schema, project_id
     isSignedIn: false,
   });
   const [isLoading, setIsLoading] = useState(true);
-  
+
   const refreshAccessTokenRef = useRef<(refreshToken: string) => Promise<string>>(async (rt) => "");
-  
+
   const fetchToken = useCallback(async (): Promise<string> => {
     try {
-      const storedTokens = await SecureStore.getItemAsync(TOKEN_STORAGE_KEY);
+      const storedTokens = await storageAdapter.getItem(TOKEN_STORAGE_KEY);
       if (!storedTokens) {
         throw new Error('No tokens found - user not signed in');
       }
 
       const { accessToken, refreshToken } = JSON.parse(storedTokens);
-      
+
       if (!isTokenExpired(accessToken)) {
         console.log('Valid token found');
         return accessToken;
@@ -155,11 +219,11 @@ export const BasicProvider = <S extends DBSchema>({ children, schema, project_id
       throw error;
     }
   }, []);
-  
+
   const signout = useCallback(async () => {
     try {
-      await SecureStore.deleteItemAsync(TOKEN_STORAGE_KEY);
-      await SecureStore.deleteItemAsync(USER_INFO_STORAGE_KEY);
+      await storageAdapter.deleteItem(TOKEN_STORAGE_KEY);
+      await storageAdapter.deleteItem(USER_INFO_STORAGE_KEY);
       setAuthState({
         accessToken: null,
         refreshToken: null,
@@ -170,7 +234,7 @@ export const BasicProvider = <S extends DBSchema>({ children, schema, project_id
       console.error('Error during signout:', error);
     }
   }, []);
-  
+
   const refreshAccessToken = useCallback(async (refreshToken: string) => {
     try {
       console.log('Attempting to refresh token...');
@@ -209,17 +273,17 @@ export const BasicProvider = <S extends DBSchema>({ children, schema, project_id
       throw error;
     }
   }, [config.tokenEndpoint, config.clientId]);
-  
+
   useEffect(() => {
     refreshAccessTokenRef.current = refreshAccessToken;
   }, [refreshAccessToken]);
-  
+
   const db = useMemo(() => {
     return new BasicDBSDK<S>({
       project_id: schema.project_id,
       getToken: async () => {
         const tok = await fetchToken();
-        
+
         if (!tok) {
           throw new Error('User not authenticated');
         }
@@ -230,7 +294,7 @@ export const BasicProvider = <S extends DBSchema>({ children, schema, project_id
   }, [schema, project_id, fetchToken]);
 
   const storeTokens = async (tokenData: TokenResponse) => {
-    await SecureStore.setItemAsync(
+    await storageAdapter.setItem(
       TOKEN_STORAGE_KEY,
       JSON.stringify({
         accessToken: tokenData.access_token,
@@ -239,60 +303,71 @@ export const BasicProvider = <S extends DBSchema>({ children, schema, project_id
     );
   };
 
+  const handleLoginCode = async (code: string) => {
+    const tokenResponse = await fetch(config.tokenEndpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        code,
+        client_id: config.clientId,
+        grant_type: 'authorization_code',
+      }),
+    });
+
+    if (!tokenResponse.ok) {
+      throw new Error('Failed to exchange code for token');
+    }
+
+    const tokenData: TokenResponse = await tokenResponse.json();
+    await storeTokens(tokenData);
+
+    const userInfoResponse = await fetch(config.userInfoEndpoint, {
+      headers: { Authorization: `Bearer ${tokenData.access_token}` },
+    });
+
+    if (!userInfoResponse.ok) {
+      throw new Error('Failed to fetch user info', {
+        cause: userInfoResponse,
+      });
+    }
+
+    const userInfo: UserInfo = await userInfoResponse.json();
+    await storeUserInfo(userInfo);
+
+    setAuthState({
+      accessToken: tokenData.access_token,
+      refreshToken: tokenData.refresh_token,
+      user: userInfo,
+      isSignedIn: true,
+    });
+  }
+
   const login = async () => {
-    try {
-      const result = await promptAsync();
-      if (result.type === 'success') {
-        const { code } = result.params;
-        
-        const tokenResponse = await fetch(config.tokenEndpoint, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            code,
-            client_id: config.clientId,
-            grant_type: 'authorization_code',
-          }),
-        });
+    if (Platform.OS === 'web') {
+      const url = AuthWebHandler(config).createAuthUrl();
+      window.location.href = url;
 
-        if (!tokenResponse.ok) {
-          throw new Error('Failed to exchange code for token');
+    } else {
+      try {
+        const result = await promptAsync();
+        if (result.type === 'success') {
+          const { code } = result.params;
+          
+          await handleLoginCode(code);
+
         }
-
-        const tokenData: TokenResponse = await tokenResponse.json();
-        await storeTokens(tokenData);
-
-        const userInfoResponse = await fetch(config.userInfoEndpoint, {
-          headers: { Authorization: `Bearer ${tokenData.access_token}` },
-        });
-
-        if (!userInfoResponse.ok) {
-          throw new Error('Failed to fetch user info', {
-            cause: userInfoResponse,
-          });
-        }
-
-        const userInfo: UserInfo = await userInfoResponse.json();
-        await storeUserInfo(userInfo);
-
-        setAuthState({
-          accessToken: tokenData.access_token,
-          refreshToken: tokenData.refresh_token,
-          user: userInfo,
-          isSignedIn: true,
-        });
+      } catch (error) {
+        console.error('Authentication error:', error);
+        await signout();
+        throw error;
       }
-    } catch (error) {
-      console.error('Authentication error:', error);
-      await signout();
-      throw error;
     }
   };
 
   const debugAuth = async () => {
     try {
       console.log('=== Auth Debug Information ===');
-      
+
       console.log('Current Auth State:', {
         isSignedIn: authState.isSignedIn,
         userEmail: authState.user?.email,
@@ -300,7 +375,7 @@ export const BasicProvider = <S extends DBSchema>({ children, schema, project_id
         hasRefreshToken: !!authState.refreshToken,
       });
 
-      const storedTokens = await SecureStore.getItemAsync(TOKEN_STORAGE_KEY);
+      const storedTokens = await storageAdapter.getItem(TOKEN_STORAGE_KEY);
       if (storedTokens) {
         const { accessToken, refreshToken } = JSON.parse(storedTokens);
         console.log('Stored Tokens:', {
@@ -319,7 +394,7 @@ export const BasicProvider = <S extends DBSchema>({ children, schema, project_id
 
         if (refreshToken) {
           console.log('Refresh Token:', {
-            value: refreshToken.substring(0, 10) + '...', 
+            value: refreshToken.substring(0, 10) + '...',
             length: refreshToken.length,
           });
         }
@@ -327,7 +402,7 @@ export const BasicProvider = <S extends DBSchema>({ children, schema, project_id
         console.log('No stored tokens found');
       }
 
-      const storedUserInfo = await SecureStore.getItemAsync(USER_INFO_STORAGE_KEY);
+      const storedUserInfo = await storageAdapter.getItem(USER_INFO_STORAGE_KEY);
       if (storedUserInfo) {
         console.log('Stored User Info:', JSON.parse(storedUserInfo));
       } else {
@@ -355,17 +430,32 @@ export const BasicProvider = <S extends DBSchema>({ children, schema, project_id
 
   useEffect(() => {
     loadStoredAuth();
+
+    if (Platform.OS === 'web') {
+      if (window.location.pathname.includes('oauth/callback')) {
+        const urlParams = new URLSearchParams(window.location.search);
+        const code = urlParams.get('code');
+        const state = urlParams.get('state');
+        const storedState = sessionStorage.getItem('basic_oauth_state');
+
+        if (code && state === storedState) {
+          handleLoginCode(code);
+          window.history.replaceState({}, '', window.location.pathname);
+        }
+      }
+    }
+    
   }, []);
 
   const loadStoredAuth = async () => {
     try {
-      const storedTokens = await SecureStore.getItemAsync(TOKEN_STORAGE_KEY);
-      const storedUserInfo = await SecureStore.getItemAsync(USER_INFO_STORAGE_KEY);
-      
+      const storedTokens = await storageAdapter.getItem(TOKEN_STORAGE_KEY);
+      const storedUserInfo = await storageAdapter.getItem(USER_INFO_STORAGE_KEY);
+
       if (storedTokens && storedUserInfo) {
         const { accessToken, refreshToken } = JSON.parse(storedTokens);
         const userInfo = JSON.parse(storedUserInfo);
-        
+
         if (await verifyToken(accessToken)) {
           setAuthState({
             accessToken,
@@ -402,16 +492,19 @@ export const BasicProvider = <S extends DBSchema>({ children, schema, project_id
   };
 
   const storeUserInfo = async (userInfo: UserInfo) => {
-    await SecureStore.setItemAsync(
+    await storageAdapter.setItem(
       USER_INFO_STORAGE_KEY,
       JSON.stringify(userInfo)
     );
   };
 
-
-
   useEffect(() => {
     checkForUpdates();
+
+    // Show warning on web platform about security
+    if (Platform.OS === 'web') {
+      console.warn('@basictech/expo - running on web platform - some features may not work as expected');
+    }
   }, []);
 
   return (
