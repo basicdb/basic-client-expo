@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import * as AuthSession from 'expo-auth-session';
 import * as SecureStore from 'expo-secure-store';
 import { BasicDBSDK, DBSchema } from './db';
@@ -49,6 +49,29 @@ interface BasicContextType<S extends DBSchema> extends Omit<AuthState, 'user'> {
 
 const TOKEN_STORAGE_KEY = 'auth_tokens';
 const USER_INFO_STORAGE_KEY = 'user_info';
+const SDK_VERSION = '0.0.1';
+
+const checkForUpdates = async () => {
+  try {
+    
+    const response = await fetch('https://registry.npmjs.org/@basictech/expo');
+    if (!response.ok) {
+      throw new Error('Failed to fetch package info');
+    }
+    
+    const packageInfo = await response.json();
+    const latestVersion = packageInfo['dist-tags']?.latest;
+    
+    console.log('latestVersion', latestVersion)
+    if (latestVersion && latestVersion !== SDK_VERSION) {
+      console.warn(`Initializing @basictech/expo - v${SDK_VERSION} - ⚠️  new version available ${latestVersion}, pls update`);
+    } else { 
+      console.log(`Initializing @basictech/expo - v${SDK_VERSION} - (latest ✅) `);
+    }
+  } catch (error) {
+    console.error(`Initializing @basictech/expo - v${SDK_VERSION} - Error checking for updates:`, error);
+  }
+};
 
 const BasicContext = createContext<BasicContextType<any> | null>(null);
 
@@ -104,14 +127,35 @@ export const BasicProvider = <S extends DBSchema>({ children, schema, project_id
     isSignedIn: false,
   });
   const [isLoading, setIsLoading] = useState(true);
-  const [db, setDb] = useState<BasicDBSDK<S>>(
-    new BasicDBSDK<S>({
-      project_id: schema.project_id,
-      token: 'dummy-initial-token',
-      schema,
-    })
-  );
+  
+  const refreshAccessTokenRef = useRef<(refreshToken: string) => Promise<string>>(async (rt) => "");
+  
+  const fetchToken = useCallback(async (): Promise<string> => {
+    try {
+      const storedTokens = await SecureStore.getItemAsync(TOKEN_STORAGE_KEY);
+      if (!storedTokens) {
+        throw new Error('No tokens found - user not signed in');
+      }
 
+      const { accessToken, refreshToken } = JSON.parse(storedTokens);
+      
+      if (!isTokenExpired(accessToken)) {
+        console.log('Valid token found');
+        return accessToken;
+      }
+
+      console.log('Token expired, attempting refresh...');
+      if (!refreshAccessTokenRef.current) {
+        throw new Error('refreshAccessToken not initialized');
+      }
+      const newAccessToken = await refreshAccessTokenRef.current(refreshToken);
+      return newAccessToken;
+    } catch (error) {
+      console.error('Error in fetchToken:', error);
+      throw error;
+    }
+  }, []);
+  
   const signout = useCallback(async () => {
     try {
       await SecureStore.deleteItemAsync(TOKEN_STORAGE_KEY);
@@ -122,25 +166,10 @@ export const BasicProvider = <S extends DBSchema>({ children, schema, project_id
         user: null,
         isSignedIn: false,
       });
-      setDb(new BasicDBSDK<S>({
-         project_id: schema.project_id,
-         token: 'logged-out-token',
-         schema
-      }));
     } catch (error) {
       console.error('Error during signout:', error);
     }
-  }, [schema]);
-
-  const storeTokens = async (tokenData: TokenResponse) => {
-    await SecureStore.setItemAsync(
-      TOKEN_STORAGE_KEY,
-      JSON.stringify({
-        accessToken: tokenData.access_token,
-        refreshToken: tokenData.refresh_token,
-      })
-    );
-  };
+  }, []);
   
   const refreshAccessToken = useCallback(async (refreshToken: string) => {
     try {
@@ -177,125 +206,36 @@ export const BasicProvider = <S extends DBSchema>({ children, schema, project_id
         stack: error?.stack,
         type: error?.constructor?.name || 'Unknown error type'
       });
-      await signout();
       throw error;
     }
-  }, [config.tokenEndpoint, config.clientId, signout]);
-
-  const fetchToken = useCallback(async (): Promise<string> => {
-    try {
-      const storedTokens = await SecureStore.getItemAsync(TOKEN_STORAGE_KEY);
-      if (!storedTokens) {
-        throw new Error('No stored tokens found');
-      }
-
-      const { accessToken, refreshToken } = JSON.parse(storedTokens);
-      
-      if (!isTokenExpired(accessToken)) {
-        console.log('Current token is still valid');
-        return accessToken;
-      }
-
-      console.log('Token expired, attempting refresh...');
-      const newAccessToken = await refreshAccessToken(refreshToken);
-      return newAccessToken;
-    } catch (error) {
-      console.error('Error in fetchToken:', error);
-      await signout();
-      throw error;
-    }
-  }, [refreshAccessToken, signout]);
-
-  const [request, response, promptAsync] = AuthSession.useAuthRequest(
-    {
-      clientId: config.clientId,
-      redirectUri: config.redirectUri,
-      scopes: config.scopes,
-      responseType: AuthSession.ResponseType.Code,
-    },
-    {
-      authorizationEndpoint: config.authorizationEndpoint,
-      tokenEndpoint: config.tokenEndpoint,
-    }
-  );
-
+  }, [config.tokenEndpoint, config.clientId]);
+  
   useEffect(() => {
-    const updateDbToken = async () => {
-      if (!authState.isSignedIn) return;
-      try {
-        console.log('Attempting to fetch token for DB update...');
-        const token = await fetchToken();
-        console.log('Updating DB with new token:', {
-          tokenLength: token.length,
-          tokenPreview: token.substring(0, 10) + '...'
-        });
-        setDb(
-          new BasicDBSDK<S>({
-            project_id: schema.project_id,
-            token,
-            schema,
-          })
-        );
-      } catch (error: any) {
-        console.error('Failed to update DB token due to token fetch/refresh error.');
-      }
-    };
-
-    updateDbToken();
-  }, [authState.isSignedIn, schema, fetchToken]);
-
-  useEffect(() => {
-    loadStoredAuth();
-  }, []);
-
-  const loadStoredAuth = async () => {
-    try {
-      const storedTokens = await SecureStore.getItemAsync(TOKEN_STORAGE_KEY);
-      const storedUserInfo = await SecureStore.getItemAsync(USER_INFO_STORAGE_KEY);
-      
-      if (storedTokens && storedUserInfo) {
-        const { accessToken, refreshToken } = JSON.parse(storedTokens);
-        const userInfo = JSON.parse(storedUserInfo);
+    refreshAccessTokenRef.current = refreshAccessToken;
+  }, [refreshAccessToken]);
+  
+  const db = useMemo(() => {
+    return new BasicDBSDK<S>({
+      project_id: schema.project_id,
+      getToken: async () => {
+        const tok = await fetchToken();
         
-        if (await verifyToken(accessToken)) {
-          setAuthState({
-            accessToken,
-            refreshToken,
-            user: userInfo,
-            isSignedIn: true,
-          });
-        } else {
-          await refreshAccessToken(refreshToken);
+        if (!tok) {
+          throw new Error('User not authenticated');
         }
-      }
-    } catch (error) {
-      console.error('Error loading stored auth:', error);
-    } finally {
-      setIsLoading(false);
-    }
-  };
+        return tok;
+      },
+      schema,
+    });
+  }, [schema, project_id, fetchToken]);
 
-  const verifyToken = async (token: string): Promise<boolean> => {
-    try {
-      console.log('Verifying token...');
-      const response = await fetch(config.userInfoEndpoint, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      console.log('Token verification response status:', response.status);
-      if (!response.ok) {
-        console.log('Token verification failed:', await response.text());
-      }
-      return response.ok;
-    } catch (error) {
-      console.error('Token verification error:', error);
-      return false;
-    }
-  };
-
-  const storeUserInfo = async (userInfo: UserInfo) => {
+  const storeTokens = async (tokenData: TokenResponse) => {
     await SecureStore.setItemAsync(
-      USER_INFO_STORAGE_KEY,
-      JSON.stringify(userInfo)
+      TOKEN_STORAGE_KEY,
+      JSON.stringify({
+        accessToken: tokenData.access_token,
+        refreshToken: tokenData.refresh_token,
+      })
     );
   };
 
@@ -400,6 +340,80 @@ export const BasicProvider = <S extends DBSchema>({ children, schema, project_id
     }
   };
 
+  const [request, response, promptAsync] = AuthSession.useAuthRequest(
+    {
+      clientId: config.clientId,
+      redirectUri: config.redirectUri,
+      scopes: config.scopes,
+      responseType: AuthSession.ResponseType.Code,
+    },
+    {
+      authorizationEndpoint: config.authorizationEndpoint,
+      tokenEndpoint: config.tokenEndpoint,
+    }
+  );
+
+  useEffect(() => {
+    loadStoredAuth();
+  }, []);
+
+  const loadStoredAuth = async () => {
+    try {
+      const storedTokens = await SecureStore.getItemAsync(TOKEN_STORAGE_KEY);
+      const storedUserInfo = await SecureStore.getItemAsync(USER_INFO_STORAGE_KEY);
+      
+      if (storedTokens && storedUserInfo) {
+        const { accessToken, refreshToken } = JSON.parse(storedTokens);
+        const userInfo = JSON.parse(storedUserInfo);
+        
+        if (await verifyToken(accessToken)) {
+          setAuthState({
+            accessToken,
+            refreshToken,
+            user: userInfo,
+            isSignedIn: true,
+          });
+        } else {
+          await refreshAccessToken(refreshToken);
+        }
+      }
+    } catch (error) {
+      console.error('Error loading stored auth:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const verifyToken = async (token: string): Promise<boolean> => {
+    try {
+      console.log('Verifying token...');
+      const response = await fetch(config.userInfoEndpoint, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      console.log('Token verification response status:', response.status);
+      if (!response.ok) {
+        console.log('Token verification failed:', await response.text());
+      }
+      return response.ok;
+    } catch (error) {
+      console.error('Token verification error:', error);
+      return false;
+    }
+  };
+
+  const storeUserInfo = async (userInfo: UserInfo) => {
+    await SecureStore.setItemAsync(
+      USER_INFO_STORAGE_KEY,
+      JSON.stringify(userInfo)
+    );
+  };
+
+
+
+  useEffect(() => {
+    checkForUpdates();
+  }, []);
+
   return (
     <BasicContext.Provider
       value={{
@@ -407,7 +421,7 @@ export const BasicProvider = <S extends DBSchema>({ children, schema, project_id
         isLoading,
         login,
         signout,
-        db,
+        db: db as BasicDBSDK<S>,
         debugAuth,
       } as BasicContextType<S>}
     >

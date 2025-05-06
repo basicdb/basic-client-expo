@@ -33,7 +33,8 @@ export function defineSchema<S extends DBSchema>(schema: S): S {
 
 interface SDKConfig<S extends DBSchema> {
   project_id: string;
-  token: string;
+  token?: string;
+  getToken?: () => Promise<string>;
   baseUrl?: string;
   schema: S;
 }
@@ -57,12 +58,14 @@ class TableClient<T> {
     private baseUrl: string,
     private projectId: string,
     private token: string,
-    private table: string
+    private table: string,
+    private getToken: () => Promise<string>
   ) {}
 
-  private headers() {
+  private async headers() {
+    const token = await this.getToken();
     return {
-      Authorization: `Bearer ${this.token}`,
+      Authorization: `Bearer ${token}`,
       "Content-Type": "application/json"
     };
   }
@@ -70,7 +73,7 @@ class TableClient<T> {
   private async handleRequest<T>(request: Promise<Response>): Promise<T> {
     try {
       console.log('Making request to:', this.baseUrl);
-      console.log('Headers:', this.headers());
+      console.log('Headers:', await this.headers());
       console.log('Project ID:', this.projectId);
       console.log('Table:', this.table);
       
@@ -140,59 +143,63 @@ class TableClient<T> {
 
   async select(query?: { id?: string }): Promise<T[]> {
     const params = query?.id ? `?id=${query.id}` : "";
-    console.log(this.headers())
+    const headers = await this.headers();
+    console.log(headers);
     return this.handleRequest(
       fetch(`${this.baseUrl}/account/${this.projectId}/db/${this.table}${params}`, {
-        headers: this.headers()
+        headers
       })
     );
   }
 
   async insert(value: T): Promise<T> {
+    const headers = await this.headers();
     return this.handleRequest(
       fetch(`${this.baseUrl}/account/${this.projectId}/db/${this.table}`, {
         method: "POST",
-        headers: this.headers(),
+        headers,
         body: JSON.stringify({ value })
       })
     );
   }
 
   async update(id: string, value: Partial<T>): Promise<T> {
+    const headers = await this.headers();
     return this.handleRequest(
       fetch(`${this.baseUrl}/account/${this.projectId}/db/${this.table}/${id}`, {
         method: "PATCH",
-        headers: this.headers(),
+        headers,
         body: JSON.stringify({ value })
       })
     );
   }
 
   async upsert(id: string, value: T): Promise<T> {
+    const headers = await this.headers();
     return this.handleRequest(
       fetch(`${this.baseUrl}/account/${this.projectId}/db/${this.table}/${id}`, {
         method: "PUT",
-        headers: this.headers(),
+        headers,
         body: JSON.stringify({ value })
       })
     );
   }
 
   async delete(id: string): Promise<T> {
+    const headers = await this.headers();
     return this.handleRequest(
       fetch(`${this.baseUrl}/account/${this.projectId}/db/${this.table}/${id}`, {
         method: "DELETE",
-        headers: {
-          Authorization: `Bearer ${this.token}`
-        }
+        headers
       })
     );
   }
 
   async get(id: string): Promise<T> {
+    const headers = await this.headers();
     return this.handleRequest(
       fetch(`${this.baseUrl}/account/${this.projectId}/db/${this.table}/${id}`, {
-        headers: this.headers()
+        headers
       })
     );
   }
@@ -201,13 +208,22 @@ class TableClient<T> {
 // --- Main SDK ---
 export class BasicDBSDK<S extends DBSchema> {
   private projectId: string;
-  private token: string;
+  private getToken: () => Promise<string>;
   private baseUrl: string;
   private schema: S;
 
   constructor(config: SDKConfig<S>) {
     this.projectId = config.project_id;
-    this.token = config.token;
+    
+    // Handle either static token or token getter function
+    if (config.getToken) {
+      this.getToken = config.getToken;
+    } else if (config.token) {
+      this.getToken = async () => config.token!;
+    } else {
+      throw new Error('Either token or getToken must be provided');
+    }
+    
     this.baseUrl = config.baseUrl || "https://api.basic.tech";
     this.schema = config.schema;
   }
@@ -215,11 +231,13 @@ export class BasicDBSDK<S extends DBSchema> {
   from<K extends keyof S["tables"] & string>(
     table: K
   ): TableClient<TableData<S["tables"][K]>> {
+    // Create a wrapped client that will get a fresh token for each request
     return new TableClient(
       this.baseUrl,
       this.projectId,
-      this.token,
-      table
+      "",  // Empty placeholder, will be replaced in headers() method
+      table,
+      this.getToken
     );
   }
 
