@@ -51,7 +51,7 @@ interface BasicContextType<S extends DBSchema> extends Omit<AuthState, 'user'> {
 
 const TOKEN_STORAGE_KEY = 'auth_tokens';
 const USER_INFO_STORAGE_KEY = 'user_info';
-const SDK_VERSION = '0.0.3';
+const SDK_VERSION = '0.0.5';
 
 const AuthWebHandler = (config: any) => { 
   const generateRandomState = () => {
