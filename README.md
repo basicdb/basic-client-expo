@@ -5,7 +5,9 @@ A simple React Native Expo component library.
 ## Installation
 
 ```bash
-npm install <path-to-client-expo> # or yarn add <path-to-client-expo>
+npm install @basictech/expo
+# or
+yarn add @basictech/expo
 # or if published:
 # npm install client-expo
 ```
@@ -51,7 +53,7 @@ export default function App() {
   // Ensure 'your-app-scheme' matches the scheme in your app.json
   // under expo.scheme
   return (
-    <BasicProvider<AppSchema> schema={schema} project_id={schema.project_id}>
+    <BasicProvider schema={schema} project_id={schema.project_id}>
       <MainApp />
     </BasicProvider>
   );
@@ -102,7 +104,6 @@ function ExampleComponent() {
       // Add the new note
       const addedNote = await db.from('notes').add(newNoteData);
       if (addedNote) {
-        // @ts-ignore
         setNotes(prev => [...prev, addedNote]);
       }
       setNewNoteTitle('');
