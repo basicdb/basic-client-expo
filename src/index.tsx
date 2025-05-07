@@ -2,7 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useRef, useCallb
 import * as AuthSession from 'expo-auth-session';
 import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
-import { BasicDBSDK, DBSchema } from './db';
+import { BasicDBSDK, DBSchema, createSchema } from './db';
 
 
 interface TokenResponse {
@@ -51,7 +51,7 @@ interface BasicContextType<S extends DBSchema> extends Omit<AuthState, 'user'> {
 
 const TOKEN_STORAGE_KEY = 'auth_tokens';
 const USER_INFO_STORAGE_KEY = 'user_info';
-const SDK_VERSION = '0.0.4';
+const SDK_VERSION = '0.0.3';
 
 const AuthWebHandler = (config: any) => { 
   const generateRandomState = () => {
@@ -287,6 +287,8 @@ export const BasicProvider = <S extends DBSchema>({ children, schema, project_id
   }, [refreshAccessToken]);
 
   const db = useMemo(() => {
+    const _schema = { ...schema} as const
+    const _schema2 = createSchema(_schema)
     return new BasicDBSDK<S>({
       project_id: schema.project_id,
       getToken: async () => {
@@ -297,7 +299,7 @@ export const BasicProvider = <S extends DBSchema>({ children, schema, project_id
         }
         return tok;
       },
-      schema,
+      schema: _schema2,
     });
   }, [schema, project_id, fetchToken]);
 

@@ -7,8 +7,8 @@ interface SchemaField {
 }
 
 interface TableSchema {
-  type: "collection";
   fields: Record<string, SchemaField>;
+  [key: string]: any; // Allow additional properties
 }
 
 export interface DBSchema {
@@ -27,7 +27,50 @@ type TableData<T extends TableSchema> = {
 };
 
 // --- Schema Helper ---
-export function defineSchema<S extends DBSchema>(schema: S): S {
+// Constraint for the input schema to ensure it has the basic shape.
+// T_SpecificSchema itself will be more specific due to 'as const'.
+type ValidSchemaInput = {
+  project_id: string;
+  version: number;
+  tables: Record<string, TableSchema>; // This means T_SpecificSchema.tables must be assignable to this
+};
+
+export function createSchema<T_SpecificSchema extends ValidSchemaInput>(
+  schema: T_SpecificSchema
+): T_SpecificSchema {
+  // Detailed runtime validation
+  if (typeof schema.project_id !== 'string' || schema.project_id.trim() === '') {
+    throw new Error('Invalid schema: project_id must be a non-empty string.');
+  }
+  if (typeof schema.version !== 'number') {
+    throw new Error('Invalid schema: version must be a number.');
+  }
+  if (typeof schema.tables !== 'object' || schema.tables === null || Object.keys(schema.tables).length === 0) {
+    throw new Error('Invalid schema: tables must be a non-empty object.');
+  }
+
+  for (const tableName in schema.tables) {
+    const table = schema.tables[tableName];
+    if (typeof table !== 'object' || table === null) {
+        throw new Error(`Invalid schema: table '${tableName}' is not an object.`);
+    }
+    if (typeof table.fields !== 'object' || table.fields === null || Object.keys(table.fields).length === 0) {
+      throw new Error(`Invalid schema for table '${tableName}': fields must be a non-empty object.`);
+    }
+    for (const fieldName in table.fields) {
+      const field = table.fields[fieldName];
+      if (typeof field !== 'object' || field === null) {
+        throw new Error(`Invalid schema for table '${tableName}', field '${fieldName}': is not an object.`);
+      }
+      const validTypes: FieldType[] = ["string", "boolean", "number"];
+      if (typeof field.type !== 'string' || !validTypes.includes(field.type as FieldType)) {
+        throw new Error(`Invalid schema for table '${tableName}', field '${fieldName}': type must be one of "string", "boolean", "number".`);
+      }
+      if (field.indexed !== undefined && typeof field.indexed !== 'boolean') {
+         throw new Error(`Invalid schema for table '${tableName}', field '${fieldName}': optional 'indexed' property must be a boolean.`);
+      }
+    }
+  }
   return schema;
 }
 
@@ -141,7 +184,7 @@ class TableClient<T> {
     }
   }
 
-  async select(query?: { id?: string }): Promise<T[]> {
+  async getAll(query?: { id?: string }): Promise<T[]> {
     const params = query?.id ? `?id=${query.id}` : "";
     const headers = await this.headers();
     console.log(headers);
@@ -152,7 +195,7 @@ class TableClient<T> {
     );
   }
 
-  async insert(value: T): Promise<T> {
+  async add(value: Partial<T>): Promise<T> {
     const headers = await this.headers();
     return this.handleRequest(
       fetch(`${this.baseUrl}/account/${this.projectId}/db/${this.table}`, {
@@ -174,7 +217,7 @@ class TableClient<T> {
     );
   }
 
-  async upsert(id: string, value: T): Promise<T> {
+  async replace(id: string, value: Partial<T>): Promise<T> {
     const headers = await this.headers();
     return this.handleRequest(
       fetch(`${this.baseUrl}/account/${this.projectId}/db/${this.table}/${id}`, {
@@ -186,7 +229,10 @@ class TableClient<T> {
   }
 
   async delete(id: string): Promise<T> {
-    const headers = await this.headers();
+    const token = await this.getToken();
+    const headers = {
+      Authorization: `Bearer ${token}`
+    };
     return this.handleRequest(
       fetch(`${this.baseUrl}/account/${this.projectId}/db/${this.table}/${id}`, {
         method: "DELETE",
@@ -211,6 +257,7 @@ export class BasicDBSDK<S extends DBSchema> {
   private getToken: () => Promise<string>;
   private baseUrl: string;
   private schema: S;
+  private tableNames: (keyof S["tables"] & string)[];
 
   constructor(config: SDKConfig<S>) {
     this.projectId = config.project_id;
@@ -226,11 +273,17 @@ export class BasicDBSDK<S extends DBSchema> {
     
     this.baseUrl = config.baseUrl || "https://api.basic.tech";
     this.schema = config.schema;
+    this.tableNames = Object.keys(this.schema.tables) as (keyof S["tables"] & string)[];
   }
 
   from<K extends keyof S["tables"] & string>(
     table: K
   ): TableClient<TableData<S["tables"][K]>> {
+    // Validate table name at runtime
+    if (!this.tableNames.includes(table)) {
+      throw new Error(`Table '${table}' not found in schema. Available tables: ${this.tableNames.join(', ')}`);
+    }
+    
     // Create a wrapped client that will get a fresh token for each request
     return new TableClient(
       this.baseUrl,
