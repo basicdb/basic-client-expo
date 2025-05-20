@@ -6,10 +6,7 @@ A simple React Native Expo component library.
 
 ```bash
 npm install @basictech/expo
-# or
-yarn add @basictech/expo
-# or if published:
-# npm install client-expo
+
 ```
 
 ## Usage
