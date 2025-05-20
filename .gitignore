@@ -52,5 +52,8 @@ dist/
 *.mobileprovision
 *.orig.*
 
+local.ts
+.vscode/
+
 # Build output
 /dist 

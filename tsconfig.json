@@ -18,7 +18,8 @@
     "forceConsistentCasingInFileNames": true,
     "noEmit": true, // tsup will handle emitting files
     "resolveJsonModule": true,
-    "isolatedModules": true
+    "isolatedModules": true,
+    "allowImportingTsExtensions": true
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist"]

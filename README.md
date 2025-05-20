@@ -26,9 +26,12 @@ export const schema = {
     notes: {
       type: 'collection',
       fields: {
-        title: { type: 'string' },
+        title: { type: 'string', indexed: true },
         content: { type: 'string' },
         createdAt: { type: 'number', indexed: true },
+        completed: { type: 'boolean', indexed: true },
+        priority: { type: 'number', indexed: true },
+        tags: { type: 'json', indexed: true }
       },
     },
     // Add other tables here
@@ -71,7 +74,7 @@ import { AppSchema } from './schema'; // Import your schema type
 
 function ExampleComponent() {
   const { user, login, signout, db, isLoading, isSignedIn } = useBasic<AppSchema>();
-  const [notes, setNotes] = useState<Array<{id: string, title: string, content: string, createdAt: number }>>([]); // Assuming structure
+  const [notes, setNotes] = useState<Array<{id: string, title: string, content: string, createdAt: number }>>([]);
   const [newNoteTitle, setNewNoteTitle] = useState('');
 
   // Fetch notes when signed in
@@ -79,17 +82,16 @@ function ExampleComponent() {
     if (isSignedIn && db) {
       const fetchNotes = async () => {
         try {
-          // Access the 'notes' table and fetch all notes
           const fetchedNotes = await db.from('notes').getAll();
-          setNotes(fetchedNotes || []); // Ensure fetchedNotes is not null/undefined
+          setNotes(fetchedNotes || []);
         } catch (error) {
           console.error("Failed to fetch notes:", error);
-          setNotes([]); // Clear notes on error
+          setNotes([]);
         }
       };
       fetchNotes();
     } else {
-      setNotes([]); // Clear notes if not signed in or db is not available
+      setNotes([]);
     }
   }, [isSignedIn, db]);
 
@@ -98,10 +100,12 @@ function ExampleComponent() {
     try {
       const newNoteData = {
         title: newNoteTitle,
-        content: 'Default content', // Add other fields as needed
+        content: 'Default content',
         createdAt: Date.now(),
+        completed: false,
+        priority: 1,
+        tags: ['new']
       };
-      // Add the new note
       const addedNote = await db.from('notes').add(newNoteData);
       if (addedNote) {
         setNotes(prev => [...prev, addedNote]);
@@ -132,7 +136,7 @@ function ExampleComponent() {
 
           <Text>Your Notes:</Text>
           {notes.map(note => (
-            <Text key={note.id}>{note.title}</Text> // Assuming notes have an 'id' field
+            <Text key={note.id}>{note.title}</Text>
           ))}
         </>
       ) : (
@@ -150,131 +154,166 @@ export default ExampleComponent;
 
 The `db` object provided by the `useBasic` hook is an instance of `BasicDBSDK` and allows you to interact with your database collections/tables defined in your schema.
 
-Here are some common operations:
+### Basic Operations
 
-### Using the hook
+#### 1. Fetching Records
 
-To work with a specific collection (or table), use the `from()` method with the name of the collection as defined in your schema:
-
+**Get all records:**
 ```javascript
-const notes = await db.from('notes').getAll()
+const allNotes = await db.from('notes').getAll();
 ```
 
-### Fetching Records
-
-**1. Get all records from a collection:**
-
-To retrieve all records from a collection, use the `getAll()` method.
-
+**Get a specific record by ID:**
 ```javascript
-try {
-  const allNotes = await db.from('notes').getAll();
-  console.log("All notes:", allNotes);
-  // allNotes will be an array of note objects
-} catch (error) {
-  console.error("Error fetching all notes:", error);
-  // Handle the error (e.g., show a message to the user)
-}
+const note = await db.from('notes').get('note-id-here');
 ```
 
-**2. Get a specific record by ID:**
-
-To retrieve a single record by its unique ID, use the `get(id)` method.
+#### 2. Adding Records
 
 ```javascript
-try {
-  const noteId = "some-unique-note-id"; // Replace with the actual ID of the note
-  const note = await db.from('notes').get(noteId);
-  if (note) {
-    console.log("Fetched note:", note);
-  } else {
-    console.log("Note not found"); // Or handle as an error, depending on your API design
-  }
-} catch (error) {
-  console.error("Error fetching note by ID:", error);
-}
-```
-
-The `TableClient` currently supports fetching all records or a single record by its ID. For more complex queries (filtering by multiple fields, sorting, pagination), you would typically implement those on top of `getAll()` on the client-side or look for backend capabilities if available.
-
-### Inserting Records
-
-To add a new record to a collection, use the `add(value)` method. The `value` should be an object containing the fields for the new record.
-
-```javascript
-const newNoteData = {
-  title: 'My New Note',
-  content: 'This is the content of the note.',
+const newNote = await db.from('notes').add({
+  title: 'My Note',
+  content: 'Note content',
   createdAt: Date.now(),
-};
-
-try {
-  const createdNote = await db.from('notes').add(newNoteData);
-  console.log("Inserted note:", createdNote);
-  // createdNote will be the newly created note object, likely including an auto-generated ID
-} catch (error) {
-  console.error("Error inserting note:", error);
-}
+  completed: false,
+  priority: 1,
+  tags: ['work']
+});
 ```
-The `add()` method takes an object matching the structure of your collection's fields.
 
-### Updating & Replacing Records
+#### 3. Updating Records
 
-**1. Update specific fields of a record (Patch):**
+**Update specific fields:**
+```javascript
+const updatedNote = await db.from('notes').update('note-id-here', {
+  completed: true,
+  priority: 2
+});
+```
 
-To update specific fields of an existing record by its ID, use the `update(id, value)` method. The `value` object should contain only the fields you want to change.
+**Replace entire record:**
+```javascript
+const replacedNote = await db.from('notes').replace('note-id-here', {
+  title: 'Updated Title',
+  content: 'New content',
+  createdAt: Date.now(),
+  completed: true,
+  priority: 3,
+  tags: ['updated']
+});
+```
+
+#### 4. Deleting Records
 
 ```javascript
-const noteIdToUpdate = "some-existing-note-id"; // Replace with the actual ID
-const fieldsToUpdate = { content: 'Updated content for the note.' };
-
-try {
-  const updatedNote = await db
-    .from('notes')
-    .update(noteIdToUpdate, fieldsToUpdate);
-  console.log("Updated note:", updatedNote);
-  // updatedNote will be the note object with the applied changes.
-} catch (error) {
-  console.error("Error updating note:", error);
-}
+const deletedNote = await db.from('notes').delete('note-id-here');
 ```
 
-**2. Replace an entire record (Put):**
+### Advanced Querying
 
-To completely replace an existing record by its ID, use the `replace(id, value)` method. The `value` object should represent the entire new state of the record. Any fields not included in `value` might be removed.
+#### 1. Filtering
+
+The SDK supports various filtering operations. Note that multiple conditions on different fields are not currently supported.
+
+**Simple equality:**
+```javascript
+const completedNotes = await db.from('notes')
+  .getAll()
+  .filter({ completed: true });
+```
+
+**Comparison operators:**
+```javascript
+// Greater than
+const highPriority = await db.from('notes')
+  .getAll()
+  .filter({ priority: { gt: 3 } });
+
+// Less than
+const lowPriority = await db.from('notes')
+  .getAll()
+  .filter({ priority: { lt: 2 } });
+```
+
+**Pattern matching:**
+```javascript
+// Case-sensitive pattern matching
+const projectNotes = await db.from('notes')
+  .getAll()
+  .filter({ title: { like: "Project%" } });
+
+// Case-insensitive pattern matching
+const todoNotes = await db.from('notes')
+  .getAll()
+  .filter({ title: { ilike: "%todo%" } });
+```
+
+**IN operator:**
+```javascript
+const taggedNotes = await db.from('notes')
+  .getAll()
+  .filter({ tags: { in: ["work", "important"] } });
+```
+
+**NOT operator:**
+```javascript
+const nonWorkNotes = await db.from('notes')
+  .getAll()
+  .filter({ tags: { not: { eq: "work" } } });
+```
+
+#### 2. Ordering
 
 ```javascript
-const noteIdToReplace = "some-existing-note-id"; // Replace with the actual ID
-const replacementData = {
-  title: 'Completely Replaced Note',
-  content: 'This note has been fully replaced.',
-  createdAt: Date.now(), // Or keep the original, depending on needs
-  // Any other fields defined in your schema should be included
-};
+// Order by creation date (newest first)
+const newestFirst = await db.from('notes')
+  .getAll()
+  .order("created_at", "desc");
 
-try {
-  const replacedNote = await db
-    .from('notes')
-    .replace(noteIdToReplace, replacementData);
-  console.log("Replaced note:", replacedNote);
-} catch (error) {
-  console.error("Error replacing note:", error);
-}
+// Order by title (alphabetical)
+const alphabetical = await db.from('notes')
+  .getAll()
+  .order("title");
 ```
 
-### Deleting Records
-
-To delete a record by its ID, use the `delete(id)` method.
+#### 3. Pagination
 
 ```javascript
-const noteIdToDelete = "some-note-id-to-delete"; // Replace with the actual ID
+// Get first 10 notes
+const firstPage = await db.from('notes')
+  .getAll()
+  .limit(10);
 
-try {
-  const deletedRecord = await db.from('notes').delete(noteIdToDelete);
-  console.log("Deletion result:", deletedRecord);
-  // The backend might return the deleted record or a confirmation status.
-  // Adjust based on your API's response for delete operations.
-} catch (error) {
-  console.error("Error deleting note:", error);
-}
+// Get second page
+const secondPage = await db.from('notes')
+  .getAll()
+  .limit(10)
+  .offset(10);
 ```
+
+### Supported Operators
+
+| Operator | Description | Example |
+|----------|-------------|---------|
+| `eq` | Equality | `.filter({ status: { eq: "active" } })` |
+| `neq` | Not equal | `.filter({ status: { neq: "deleted" } })` |
+| `gt` | Greater than | `.filter({ priority: { gt: 3 } })` |
+| `gte` | Greater than or equal | `.filter({ priority: { gte: 3 } })` |
+| `lt` | Less than | `.filter({ priority: { lt: 3 } })` |
+| `lte` | Less than or equal | `.filter({ priority: { lte: 3 } })` |
+| `like` | Pattern matching (case sensitive) | `.filter({ title: { like: "%project%" } })` |
+| `ilike` | Pattern matching (case insensitive) | `.filter({ title: { ilike: "%todo%" } })` |
+| `in` | Value in set | `.filter({ tags: { in: ["work", "important"] } })` |
+| `not` | Negation | `.filter({ tags: { not: { eq: "work" } } })` |
+
+### Limitations
+
+1. Multiple conditions on different fields are not currently supported in filters
+2. Range filters (e.g., `{ gte: x, lte: y }`) are not supported
+3. The order of chaining methods doesn't matter, but all operations must be chained after `getAll()`
+
+### Reserved Fields
+
+The following fields are always available, even if not defined in your schema:
+- `id` - The unique identifier for the record
+- `created_at` - The timestamp when the record was created
