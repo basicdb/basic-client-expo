@@ -2,7 +2,9 @@ import React, { createContext, useContext, useState, useEffect, useRef, useCallb
 import * as AuthSession from 'expo-auth-session';
 import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
+import Constants from 'expo-constants';
 import { BasicDBSDK, DBSchema, createSchema } from './db';
+import { version as SDK_VERSION } from '../package.json';
 
 
 interface TokenResponse {
@@ -38,6 +40,7 @@ interface BasicProviderProps<S extends DBSchema> {
   children: React.ReactNode;
   schema: S;
   project_id: string;
+  scheme?: string; // Optional scheme for deep linking
 }
 
 interface BasicContextType<S extends DBSchema> extends Omit<AuthState, 'user'> {
@@ -51,7 +54,6 @@ interface BasicContextType<S extends DBSchema> extends Omit<AuthState, 'user'> {
 
 const TOKEN_STORAGE_KEY = 'auth_tokens';
 const USER_INFO_STORAGE_KEY = 'user_info';
-const SDK_VERSION = '0.0.5';
 
 const AuthWebHandler = (config: any) => { 
   const generateRandomState = () => {
@@ -159,7 +161,9 @@ export const BasicProvider = <S extends DBSchema>({ children, schema, project_id
   const config = {
     clientId: project_id,
     redirectUri: AuthSession.makeRedirectUri({
-      scheme: 'your-app-scheme', // TODO: replace with schema from expo config 
+      scheme: Array.isArray(Constants.expoConfig?.scheme) 
+        ? Constants.expoConfig.scheme[0] 
+        : Constants.expoConfig?.scheme || 'demo',
       path: 'oauth/callback'
     }),
     scopes: ['openid', 'profile', 'email'],
