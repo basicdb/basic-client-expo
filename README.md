@@ -14,7 +14,7 @@ npm install @basictech/expo
 First, you need to define your database schema.
 
 ```typescript
-// src/schema.ts
+// src/basic.config.ts
 
 export const schema = {
   project_id: 'YOUR_PROJECT_ID', // Replace with your actual project ID
@@ -34,9 +34,6 @@ export const schema = {
     // Add other tables here
   },
 };
-
-// Infer the type for use with the hook
-export type AppSchema = typeof schema;
 
 ```
 
