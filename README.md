@@ -20,6 +20,7 @@ export const schema = {
   project_id: 'YOUR_PROJECT_ID', // Replace with your actual project ID
   version: 1,
   tables: {
+    // example table for a notes app
     notes: {
       type: 'collection',
       fields: {
@@ -43,7 +44,7 @@ Next, wrap your application's root component (e.g., `App.tsx`) with the `BasicPr
 // App.tsx (or your root component)
 import React from 'react';
 import { BasicProvider } from '@basictech/expo'; // Adjust import path if needed
-import { schema } from './schema'; // Import your schema
+import { schema } from './basic.config'; // Import your schema
 import MainApp from './MainApp'; // Your main application component
 
 export default function App() {
@@ -64,10 +65,9 @@ Then, you can use the `useBasic` hook within your components to access authentic
 import React, { useState, useEffect } from 'react';
 import { View, Text, Button, TextInput } from 'react-native';
 import { useBasic } from '@basictech/expo'; // Adjust import path
-import { AppSchema } from './schema'; // Import your schema type
 
 function ExampleComponent() {
-  const { user, login, signout, db, isLoading, isSignedIn } = useBasic<AppSchema>();
+  const { user, login, signout, db, isLoading, isSignedIn } = useBasic();
   const [notes, setNotes] = useState<Array<{id: string, title: string, content: string, createdAt: number }>>([]);
   const [newNoteTitle, setNewNoteTitle] = useState('');
 
@@ -146,7 +146,7 @@ export default ExampleComponent;
 
 ## Using the Database (`db`)
 
-The `db` object provided by the `useBasic` hook is an instance of `BasicDBSDK` and allows you to interact with your database collections/tables defined in your schema.
+The `db` object provided by the `useBasic` hook allows you to interact with your database collections/tables defined in your schema.
 
 ### Basic Operations
 
