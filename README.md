@@ -144,6 +144,52 @@ export default ExampleComponent;
 
 ```
 
+## Real-time Data with `useTable`
+
+The `useTable` hook provides real-time data fetching with automatic polling every second. This is perfect for applications that need to stay synchronized with live data.
+
+```javascript
+import React from 'react';
+import { View, Text } from 'react-native';
+import { useTable } from '@basictech/expo';
+
+function TaskList() {
+  const { data: tasks, loading, error } = useTable("tasks");
+
+  if (loading) {
+    return <Text>Loading tasks...</Text>;
+  }
+
+  if (error) {
+    return <Text>Error loading tasks: {error.message}</Text>;
+  }
+
+  return (
+    <View>
+      <Text>Tasks ({tasks.length}):</Text>
+      {tasks.map(task => (
+        <Text key={task.id}>{task.title}</Text>
+      ))}
+    </View>
+  );
+}
+```
+
+### Features
+
+- **Automatic Polling**: Data is fetched every 1 second to keep your UI in sync
+- **Type Safety**: Full TypeScript support with proper table schema types
+- **Error Handling**: Built-in error state management
+- **Loading States**: Loading indicator for initial data fetch
+- **Automatic Cleanup**: Polling stops when component unmounts
+
+### Usage Notes
+
+- The hook will continue polling as long as the component is mounted
+- Initial loading state is `true` until the first successful fetch
+- Subsequent updates don't trigger loading state changes
+- Use this hook when you need real-time updates; for one-time fetches, use `db.from(table).getAll()` directly
+
 ## Using the Database (`db`)
 
 The `db` object provided by the `useBasic` hook allows you to interact with your database collections/tables defined in your schema.

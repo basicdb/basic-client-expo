@@ -61,7 +61,7 @@ type FieldTypeToTS<T extends FieldType> =
   T extends "number" ? number :
   T extends "json" ? Record<string, any> : never;
 
-type TableData<T extends TableSchema> = {
+export type TableData<T extends TableSchema> = {
   id: string;
   created_at: string;
 } & {

@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.0.8] - 2025-10-07
+
+### Fixed
+- **OAuth2 Compliance**: Fixed critical authentication flow issues
+  - Fixed scope separator (comma → space-separated)
+  - Fixed userInfo endpoint case (`userInfo` → `userinfo`)
+  - Added required `redirect_uri` parameter to token exchange
+  - Fixed refresh token parameter name (`code` → `refresh_token`)
+- **Error Handling**: Improved error messages throughout with OAuth2 error format parsing
+- **Error Handling**: Added proper state validation and CSRF attack detection
+- **Logging**: Removed success logging, now only logs errors
+
+### Changed
+- Default scopes updated to `['profile', 'email', 'app:admin']`
 
 ## [0.0.6] 
 

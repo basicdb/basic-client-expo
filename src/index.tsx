@@ -3,7 +3,7 @@ import * as AuthSession from 'expo-auth-session';
 import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
 import Constants from 'expo-constants';
-import { BasicDBSDK, DBSchema, createSchema } from './db';
+import { BasicDBSDK, DBSchema, createSchema, TableData } from './db';
 import { version as SDK_VERSION } from '../package.json';
 
 
@@ -80,7 +80,7 @@ const AuthWebHandler = (config: any) => {
         scheme: config.scheme,
         path: 'oauth/callback'
     });
-      const scopeParam = config.scopes ? `&scope=${config.scopes.join(',')}` : '';
+      const scopeParam = config.scopes ? `&scope=${encodeURIComponent(config.scopes.join(' '))}` : '';
       return `${config.authorizationEndpoint}?response_type=code&client_id=${config.clientId}&redirect_uri=${redirectUri}${scopeParam}&state=${state}`;
     }
   }
@@ -157,6 +157,49 @@ export const useBasic = <S extends DBSchema>() => {
   return context;
 };
 
+export const useTable = <S extends DBSchema, K extends keyof S["tables"] & string>(
+  tableName: K
+) => {
+  const { db } = useBasic<S>();
+  const [data, setData] = useState<TableData<S["tables"][K]>[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<Error | null>(null);
+  const intervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  const fetchData = useCallback(async () => {
+    try {
+      const result = await db.from(tableName).getAll();
+      setData(result);
+      setError(null);
+      if (loading) {
+        setLoading(false);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err : new Error('Unknown error occurred'));
+      if (loading) {
+        setLoading(false);
+      }
+    }
+  }, [db, tableName, loading]);
+
+  useEffect(() => {
+    // Initial fetch
+    fetchData();
+
+    // Set up polling every 1 second
+    intervalRef.current = setInterval(fetchData, 1000);
+
+    // Cleanup on unmount
+    return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+      }
+    };
+  }, [fetchData]);
+
+  return { data, loading, error };
+};
+
 export const BasicProvider = <S extends DBSchema>({ children, schema, project_id }: BasicProviderProps<S>) => {
   const config = {
     clientId: project_id,
@@ -166,10 +209,10 @@ export const BasicProvider = <S extends DBSchema>({ children, schema, project_id
         : Constants.expoConfig?.scheme || 'demo',
       path: 'oauth/callback'
     }),
-    scopes: ['openid', 'profile', 'email'],
+    scopes: ['profile', 'email', 'app:admin'],
     authorizationEndpoint: 'https://api.basic.tech/auth/authorize',
     tokenEndpoint: 'https://api.basic.tech/auth/token',
-    userInfoEndpoint: 'https://api.basic.tech/auth/userInfo',
+    userInfoEndpoint: 'https://api.basic.tech/auth/userinfo',
   };
 
   const decodeJWT = (token: string) => {
@@ -249,39 +292,44 @@ export const BasicProvider = <S extends DBSchema>({ children, schema, project_id
 
   const refreshAccessToken = useCallback(async (refreshToken: string) => {
     try {
-      console.log('Attempting to refresh token...');
       const response = await fetch(config.tokenEndpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           grant_type: 'refresh_token',
-          code: refreshToken,
+          refresh_token: refreshToken,
           client_id: config.clientId,
         }),
       });
 
       if (!response.ok) {
-        const errorText = await response.text();
-        console.error('Refresh token response error:', {
+        const errorData = await response.json().catch(() => ({}));
+        
+        // OAuth2 error response format
+        const errorCode = errorData.error || 'unknown_error';
+        const errorDescription = errorData.error_description || response.statusText;
+        
+        console.error('Token refresh failed:', {
+          error: errorCode,
+          description: errorDescription,
           status: response.status,
           statusText: response.statusText,
-          headers: response.headers,
-          body: errorText
         });
-        throw new Error(`Failed to refresh token: ${errorText}`);
+        
+        throw new Error(`Token refresh failed: ${errorCode} - ${errorDescription}`);
       }
 
       const tokenData: TokenResponse = await response.json();
-      console.log('Successfully refreshed token');
       await storeTokens(tokenData);
       return tokenData.access_token;
     } catch (error: any) {
-      console.error('Error refreshing token:', {
-        error,
-        message: error?.message || 'Unknown error',
-        stack: error?.stack,
-        type: error?.constructor?.name || 'Unknown error type'
-      });
+      // Only log if it's not already logged (network errors, etc.)
+      if (!error.message?.includes('Token refresh failed:')) {
+        console.error('Error refreshing token:', {
+          message: error?.message || 'Unknown error',
+          type: error?.constructor?.name || 'Unknown error type'
+        });
+      }
       throw error;
     }
   }, [config.tokenEndpoint, config.clientId]);
@@ -322,14 +370,28 @@ export const BasicProvider = <S extends DBSchema>({ children, schema, project_id
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        code,
-        client_id: config.clientId,
         grant_type: 'authorization_code',
+        code,
+        redirect_uri: config.redirectUri,
+        client_id: config.clientId,
       }),
     });
 
     if (!tokenResponse.ok) {
-      throw new Error('Failed to exchange code for token');
+      const errorData = await tokenResponse.json().catch(() => ({}));
+      
+      // OAuth2 error response format
+      const errorCode = errorData.error || 'unknown_error';
+      const errorDescription = errorData.error_description || tokenResponse.statusText;
+      
+      console.error('Token exchange failed:', {
+        error: errorCode,
+        description: errorDescription,
+        status: tokenResponse.status,
+        statusText: tokenResponse.statusText,
+      });
+      
+      throw new Error(`Token exchange failed: ${errorCode} - ${errorDescription}`);
     }
 
     const tokenData: TokenResponse = await tokenResponse.json();
@@ -340,9 +402,18 @@ export const BasicProvider = <S extends DBSchema>({ children, schema, project_id
     });
 
     if (!userInfoResponse.ok) {
-      throw new Error('Failed to fetch user info', {
-        cause: userInfoResponse,
+      const errorData = await userInfoResponse.json().catch(() => ({}));
+      const errorCode = errorData.error || 'unknown_error';
+      const errorDescription = errorData.error_description || userInfoResponse.statusText;
+      
+      console.error('Failed to fetch user info:', {
+        error: errorCode,
+        description: errorDescription,
+        status: userInfoResponse.status,
+        statusText: userInfoResponse.statusText,
       });
+      
+      throw new Error(`Failed to fetch user info: ${errorCode} - ${errorDescription}`);
     }
 
     const userInfo: UserInfo = await userInfoResponse.json();
@@ -366,11 +437,25 @@ export const BasicProvider = <S extends DBSchema>({ children, schema, project_id
     } else {
       try {
         const result = await promptAsync();
+        
         if (result.type === 'success') {
-          const { code } = result.params;
+          const { code, error, error_description } = result.params;
+          
+          // Handle OAuth2 errors from authorization
+          if (error) {
+            console.error('Authorization failed:', {
+              error,
+              description: error_description,
+            });
+            throw new Error(`Authorization failed: ${error} - ${error_description || 'Unknown error'}`);
+          }
           
           await handleLoginCode(code);
-
+        } else if (result.type === 'error') {
+          console.error('Authentication error:', result.error);
+          throw new Error(`Authentication failed: ${result.error}`);
+        } else if (result.type === 'dismiss' || result.type === 'cancel') {
+          console.log('Authentication cancelled by user');
         }
       } catch (error) {
         console.error('Authentication error:', error);
@@ -382,6 +467,7 @@ export const BasicProvider = <S extends DBSchema>({ children, schema, project_id
 
   const debugAuth = async () => {
     try {
+      console.log(`=== @basictech/expo v${SDK_VERSION} ===`);
       console.log('=== Auth Debug Information ===');
 
       console.log('Current Auth State:', {
@@ -455,9 +541,43 @@ export const BasicProvider = <S extends DBSchema>({ children, schema, project_id
         const urlParams = new URLSearchParams(window.location.search);
         const code = urlParams.get('code');
         const state = urlParams.get('state');
+        const error = urlParams.get('error');
+        const errorDescription = urlParams.get('error_description');
         const storedState = typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('basic_oauth_state') : null;
 
-        if (code && state === storedState) {
+        // Always clean up the stored state
+        if (typeof sessionStorage !== 'undefined') {
+          sessionStorage.removeItem('basic_oauth_state');
+        }
+
+        // Handle OAuth2 errors
+        if (error) {
+          console.error('Authorization failed:', {
+            error,
+            description: errorDescription,
+          });
+          
+          // @ts-ignore
+          window.history.replaceState({}, '', window.location.pathname);
+          return;
+        }
+
+        // Validate state parameter
+        if (!state || !storedState) {
+          console.error('Missing state parameter - possible CSRF attack');
+          // @ts-ignore
+          window.history.replaceState({}, '', window.location.pathname);
+          return;
+        }
+
+        if (state !== storedState) {
+          console.error('State mismatch - possible CSRF attack');
+          // @ts-ignore
+          window.history.replaceState({}, '', window.location.pathname);
+          return;
+        }
+
+        if (code) {
           handleLoginCode(code);
           // @ts-ignore
           window.history.replaceState({}, '', window.location.pathname);
@@ -496,14 +616,22 @@ export const BasicProvider = <S extends DBSchema>({ children, schema, project_id
 
   const verifyToken = async (token: string): Promise<boolean> => {
     try {
-      console.log('Verifying token...');
       const response = await fetch(config.userInfoEndpoint, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      console.log('Token verification response status:', response.status);
+      
       if (!response.ok) {
-        console.log('Token verification failed:', await response.text());
+        const errorData = await response.json().catch(() => ({}));
+        const errorCode = errorData.error || 'unknown_error';
+        const errorDescription = errorData.error_description || response.statusText;
+        
+        console.error('Token verification failed:', {
+          error: errorCode,
+          description: errorDescription,
+          status: response.status,
+        });
       }
+      
       return response.ok;
     } catch (error) {
       console.error('Token verification error:', error);
