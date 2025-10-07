@@ -1,6 +1,7 @@
-# client-expo Library
+# @basictech/expo
 
-A simple React Native Expo component library.
+Client library for Expo apps to use Basic. 
+Checkout https://docs.basic.tech/ for more information about Basic.
 
 ## Installation
 
