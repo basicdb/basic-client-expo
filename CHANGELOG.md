@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.0.9] - 2025-10-07
+
+### Fixed
+- **Token Verification**: Fixed 401 errors on app startup
+  - Check token expiration locally before making network requests
+  - Automatically refresh expired tokens without unnecessary error logging
+  - Gracefully handle refresh failures with automatic signout
+  - Improved startup performance by skipping verification for expired tokens
+
 ## [0.0.8] - 2025-10-07
 
 ### Fixed

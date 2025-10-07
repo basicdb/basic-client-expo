@@ -596,15 +596,33 @@ export const BasicProvider = <S extends DBSchema>({ children, schema, project_id
         const { accessToken, refreshToken } = JSON.parse(storedTokens);
         const userInfo = JSON.parse(storedUserInfo);
 
-        if (await verifyToken(accessToken)) {
+        // Check token expiration locally first (avoids unnecessary network call)
+        if (!isTokenExpired(accessToken)) {
+          // Token still valid, verify with server
+          if (await verifyToken(accessToken)) {
+            setAuthState({
+              accessToken,
+              refreshToken,
+              user: userInfo,
+              isSignedIn: true,
+            });
+            return;
+          }
+        }
+        
+        // Token expired or invalid, refresh it
+        try {
+          const newAccessToken = await refreshAccessToken(refreshToken);
           setAuthState({
-            accessToken,
+            accessToken: newAccessToken,
             refreshToken,
             user: userInfo,
             isSignedIn: true,
           });
-        } else {
-          await refreshAccessToken(refreshToken);
+        } catch (refreshError) {
+          console.error('Failed to refresh token on startup:', refreshError);
+          // Clear invalid tokens
+          await signout();
         }
       }
     } catch (error) {

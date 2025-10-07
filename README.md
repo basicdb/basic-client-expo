@@ -9,9 +9,24 @@ npm install @basictech/expo
 
 ```
 
-## Usage
+## Quick Start
 
-First, you need to define your database schema.
+### 1. Configure app.json
+
+First, set up your OAuth redirect scheme in `app.json`:
+
+```json
+{
+  "expo": {
+    "scheme": "your-app-scheme",
+    "name": "Your App Name"
+  }
+}
+```
+
+### 2. Define Your Database Schema
+
+Create a schema file for your database tables:
 
 ```typescript
 // src/basic.config.ts
@@ -34,22 +49,22 @@ export const schema = {
     },
     // Add other tables here
   },
-};
+} as const;
 
 ```
 
-Next, wrap your application's root component (e.g., `App.tsx`) with the `BasicProvider`. Make sure to configure your redirect URI scheme in `app.json`.
+### 3. Wrap Your App with BasicProvider
 
-```javascript
+Wrap your root component with the `BasicProvider`:
+
+```typescript
 // App.tsx (or your root component)
 import React from 'react';
-import { BasicProvider } from '@basictech/expo'; // Adjust import path if needed
-import { schema } from './basic.config'; // Import your schema
-import MainApp from './MainApp'; // Your main application component
+import { BasicProvider } from '@basictech/expo';
+import { schema } from './src/basic.config.ts';
+import MainApp from './MainApp';
 
 export default function App() {
-  // Ensure 'your-app-scheme' matches the scheme in your app.json
-  // under expo.scheme
   return (
     <BasicProvider schema={schema} project_id={schema.project_id}>
       <MainApp />
@@ -58,13 +73,53 @@ export default function App() {
 }
 ```
 
-Then, you can use the `useBasic` hook within your components to access authentication status, user information, login/logout functions, and the database client.
+## Authentication
 
-```javascript
+### useBasic Hook
+
+The `useBasic` hook provides access to authentication state and database operations:
+
+```typescript
+const { 
+  user,          // User object: { id, email, username, name }
+  isSignedIn,    // Boolean: authentication status
+  isLoading,     // Boolean: initial loading state
+  login,         // Function: initiate OAuth login flow
+  signout,       // Function: sign out and clear tokens
+  debugAuth,     // Function: log authentication debug info
+  db             // Database SDK instance
+} = useBasic();
+```
+
+### User Object
+
+When signed in, the `user` object contains:
+
+```typescript
+{
+  id: string;       // Unique user identifier
+  email: string;    // User's email address
+  username: string; // User's username
+  name: string;     // User's display name
+}
+```
+
+### Authentication Flow
+
+The SDK handles OAuth2 authentication automatically:
+
+1. **Login**: Redirects to OAuth provider
+2. **Token Management**: Automatically refreshes expired access tokens
+3. **Secure Storage**: Tokens stored securely (SecureStore on native, encrypted localStorage on web)
+4. **Persistent Sessions**: Automatically restores authentication on app restart
+
+### Example Component
+
+```typescript
 // ExampleComponent.tsx
 import React, { useState, useEffect } from 'react';
 import { View, Text, Button, TextInput } from 'react-native';
-import { useBasic } from '@basictech/expo'; // Adjust import path
+import { useBasic } from '@basictech/expo';
 
 function ExampleComponent() {
   const { user, login, signout, db, isLoading, isSignedIn } = useBasic();
@@ -141,8 +196,28 @@ function ExampleComponent() {
 }
 
 export default ExampleComponent;
-
 ```
+
+### Debug Authentication
+
+The `debugAuth` function logs detailed authentication information to the console:
+
+```typescript
+const { debugAuth } = useBasic();
+
+// Log authentication state
+await debugAuth();
+
+// Console output includes:
+// - Authentication status
+// - Token information (presence, expiration)
+// - User information
+// - SDK version
+```
+
+This is useful for troubleshooting authentication issues during development.
+
+---
 
 ## Real-time Data with `useTable`
 
@@ -190,9 +265,11 @@ function TaskList() {
 - Subsequent updates don't trigger loading state changes
 - Use this hook when you need real-time updates; for one-time fetches, use `db.from(table).getAll()` directly
 
-## Using the Database (`db`)
+---
 
-The `db` object provided by the `useBasic` hook allows you to interact with your database collections/tables defined in your schema.
+## Database Operations
+
+The `db` object provided by the `useBasic` hook allows you to interact with your database tables defined in your schema.
 
 ### Basic Operations
 
@@ -354,6 +431,87 @@ const secondPage = await db.from('notes')
 
 ### Reserved Fields
 
-The following fields are always available, even if not defined in your schema:
-- `id` - The unique identifier for the record
-- `created_at` - The timestamp when the record was created
+The following fields are always available on all records, even if not defined in your schema:
+- `id` (string) - The unique identifier for the record
+- `created_at` (string) - ISO 8601 timestamp when the record was created
+
+---
+
+## Troubleshooting
+
+### Authentication Issues
+
+**Problem**: "User not authenticated" errors
+```typescript
+// Check authentication state
+const { isSignedIn, debugAuth } = useBasic();
+await debugAuth(); // Logs detailed auth info
+```
+
+**Problem**: OAuth redirect not working
+- Ensure `scheme` in `app.json` matches your configuration
+- For web: ensure callback URL is correctly configured
+- For native: ensure deep linking is properly set up
+
+### Database Issues
+
+**Problem**: "Table not found" errors
+- Verify table name matches schema definition exactly
+- Check that schema is properly passed to BasicProvider
+
+**Problem**: Type errors with TypeScript
+```typescript
+// Use 'as const' in schema definition
+export const schema = {
+  // ...
+} as const;
+```
+
+---
+
+## API Reference
+
+### BasicProvider Props
+
+| Prop | Type | Required | Description |
+|------|------|----------|-------------|
+| `schema` | `DBSchema` | Yes | Your database schema definition |
+| `project_id` | `string` | Yes | Your Basic project ID |
+| `children` | `ReactNode` | Yes | Your app components |
+| `scheme` | `string` | No | Custom OAuth redirect scheme |
+
+### useBasic Hook Returns
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `user` | `User \| null` | Current user object or null if not signed in |
+| `isSignedIn` | `boolean` | Whether user is authenticated |
+| `isLoading` | `boolean` | Initial loading state |
+| `login` | `() => Promise<void>` | Initiate OAuth login flow |
+| `signout` | `() => Promise<void>` | Sign out and clear all tokens |
+| `debugAuth` | `() => Promise<void>` | Log authentication debug information |
+| `db` | `BasicDBSDK` | Database operations interface |
+| `accessToken` | `string \| null` | Current access token (advanced use) |
+| `refreshToken` | `string \| null` | Current refresh token (advanced use) |
+
+### useTable Hook Returns
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `data` | `TableData[]` | Array of records from the table |
+| `loading` | `boolean` | Loading state (true until first fetch) |
+| `error` | `Error \| null` | Error object if fetch failed |
+
+---
+
+## Support & Resources
+
+- **Documentation**: Full OAuth2 specification available in repository
+- **Issues**: Report bugs on GitHub
+- **Updates**: Check for new versions regularly (`npm outdated @basictech/expo`)
+
+---
+
+## Changelog
+
+See [CHANGELOG.md](./CHANGELOG.md) for version history and updates.
